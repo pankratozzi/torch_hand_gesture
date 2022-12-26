@@ -197,22 +197,23 @@ while cap.isOpened():
     if ret:
 
         boxes = get_boxes(frame)
+        text = f"Show sign"
 
-        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(image)
-        # hand_boxes = get_hand_boxes(image, results)
-        landmarks = get_landmarks(results)
-        # if hand_boxes is not None:
-        if landmarks is not None:
-            if cropping:
-                # images = crop_hands(image, hand_boxes, False)
-                # text = get_hand_label(model, images[0])
-                new_image = get_convex_crop(image, landmarks, brighten=True)
-                text = get_hand_label(model, new_image)
-            else:
-                text = get_hand_label(model, frame)
-        else:
-            text = f"Show sign"
+        if len(boxes) > 0:  # do not response on hand gesture in case of no face detected
+
+            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = hands.process(image)
+            # hand_boxes = get_hand_boxes(image, results)
+            landmarks = get_landmarks(results)
+            # if hand_boxes is not None:
+            if landmarks is not None:
+                if cropping:
+                    # images = crop_hands(image, hand_boxes, False)
+                    # text = get_hand_label(model, images[0])
+                    new_image = get_convex_crop(image, landmarks, brighten=True)
+                    text = get_hand_label(model, new_image)
+                else:
+                    text = get_hand_label(model, frame)
 
         frame = draw_boxes(boxes, frame, text)
 
