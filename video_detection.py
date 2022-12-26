@@ -123,16 +123,38 @@ def crop_hands(image, boxes, threshoded=False):
     return hands
 
 
-def get_hand_label(model, image):
-    if len(image.shape) == 2:
-        frame = np.repeat(image[..., np.newaxis], repeats=3, axis=-1)
-    else:
-        frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+def image_resize(image, width=None, height=None, inter=cv2.INTER_AREA):
+    dim = None
+    (h, w) = image.shape[:2]
 
-    frame = cv2.resize(frame, (256, 96))
+    if width is None and height is None:
+        return image
+
+    if width is None:
+        r = height / float(h)
+        dim = (int(w * r), height)
+
+    else:
+        r = width / float(w)
+        dim = (width, int(h * r))
+
+    resized = cv2.resize(image, dim, interpolation=inter)
+
+    return resized
+
+
+def get_hand_label(model, image):
+    if len(image.shape) > 2:
+        frame = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # frame = cv2.resize(frame, (256, 96))
+    frame = image_resize(frame, height=96, inter=cv2.INTER_AREA)
+    canvas = np.zeros((96, 256))
+    canvas[:, 0:frame.shape[1]] = frame
+    frame = canvas.astype(np.uint8)
+
     frame = frame / 127.5 - 1
-    frame = frame[:, :, 0][None]
-    tensor = torch.FloatTensor(frame).unsqueeze(0).to("cuda")
+    tensor = torch.FloatTensor(frame[None]).unsqueeze(0).to("cuda")
 
     model.eval()
 
@@ -142,7 +164,7 @@ def get_hand_label(model, image):
     return int_to_labels.get(torch.max(logits, 1)[1].item())
 
 
-def get_landmarks(results):
+def get_landmarks(results, image):
     hand_landmarks = results.multi_hand_landmarks
     if not hand_landmarks:
         return None
@@ -152,7 +174,8 @@ def get_landmarks(results):
 
     for handLMs in hand_landmarks:
         for lm in handLMs.landmark:
-            landmarks.append((int(lm.x * w), int(lm.y * h)))
+            x, y = int(lm.x * w), int(lm.y * h)
+            landmarks.append((x, y))
 
     return landmarks
 
@@ -174,7 +197,16 @@ def get_convex_crop(image, landmarks, brighten=False, value=50):  # rgb image
     if brighten:
         image = increase_brightness(image, value=value)
 
-    convexHull = cv2.convexHull(np.array(landmarks))
+    landmarks = np.array(landmarks)
+    middle_x = landmarks[:, 0].mean()
+    middle_y = landmarks[:, 1].mean()
+
+    landmarks[:, 0] = np.where(landmarks[:, 0] > middle_x, landmarks[:, 0] + 10, landmarks[:, 0] - 10)
+    landmarks[:, 1] = np.where(landmarks[:, 1] > middle_y, landmarks[:, 1] + 10, landmarks[:, 1] - 10)
+
+    landmarks = np.clip(landmarks, a_min=0, a_max=max(image.shape))
+
+    convexHull = cv2.convexHull(landmarks)
 
     stencil = np.zeros_like(image, dtype=np.uint8)
     cv2.fillPoly(stencil, [convexHull], [255, 255, 255])
@@ -182,48 +214,59 @@ def get_convex_crop(image, landmarks, brighten=False, value=50):  # rgb image
 
     return new_image
 
+def main():
+    cap = cv2.VideoCapture(0)
 
-cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    if not cap.isOpened():
+        print('Cannot connect camera')
 
-if not cap.isOpened():
-    print('Cannot connect camera')
+    while cap.isOpened():
+        ret, frame = cap.read()
 
-while cap.isOpened():
-    ret, frame = cap.read()
+        if ret:
 
-    if ret:
+            boxes = get_boxes(frame)
+            text = f"Show sign"
 
-        boxes = get_boxes(frame)
-        text = f"Show sign"
+            if len(boxes) > 0:  # do not response on hand gesture in case of no face detected
+                B, G, R = cv2.split(frame)  # increase brightness
+                B = cv2.equalizeHist(B)
+                G = cv2.equalizeHist(G)
+                R = cv2.equalizeHist(R)
+                frame = cv2.merge((B, G, R))
 
-        if len(boxes) > 0:  # do not response on hand gesture in case of no face detected
+                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(image)
-            # hand_boxes = get_hand_boxes(image, results)
-            landmarks = get_landmarks(results)
-            # if hand_boxes is not None:
-            if landmarks is not None:
-                if cropping:
-                    # images = crop_hands(image, hand_boxes, False)
-                    # text = get_hand_label(model, images[0])
-                    new_image = get_convex_crop(image, landmarks, brighten=True)
-                    text = get_hand_label(model, new_image)
-                else:
-                    text = get_hand_label(model, frame)
+                results = hands.process(image)
+                # hand_boxes = get_hand_boxes(image, results)
+                landmarks = get_landmarks(results, image)
+                # if hand_boxes is not None:
+                if landmarks is not None:
+                    if cropping:
+                        # images = crop_hands(image, hand_boxes, False)
+                        # text = get_hand_label(model, images[0])
+                        new_image = get_convex_crop(image, landmarks, brighten=True, value=30)
+                        text = get_hand_label(model, new_image)
+                    else:
+                        text = get_hand_label(model, frame)
 
-        frame = draw_boxes(boxes, frame, text)
+            frame = draw_boxes(boxes, frame, text)
 
-        cv2.imshow('image', frame)
+            cv2.imshow('image', frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        else:
             break
 
-    else:
-        break
+    cap.release()
+    cv2.destroyAllWindows()
 
-cap.release()
-cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
+
