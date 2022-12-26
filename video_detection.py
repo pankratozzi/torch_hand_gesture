@@ -8,6 +8,9 @@ from yolov7.trainer import filter_eval_predictions
 import mediapipe as mp
 from resnet import ResidualBlock, Resnet
 
+# to get proper performance without dll duplicates define new environment
+# import albumentations as A
+
 
 COLORS = np.random.uniform(0, 255, size=(80, 3))
 cropping = True
@@ -25,11 +28,13 @@ model = checkpoint["model"]
 model.load_state_dict(checkpoint["state_dict"])
 
 int_to_labels = {0: 'palm', 1: 'l', 2: 'fist', 3: 'moved', 4: 'thumb', 5: 'index', 6: 'ok', 7: 'c', 8: 'down'}
-
+# transforms = A.Compose([A.LongestMaxSize(max_size=640, p=1.0), A.PadIfNeeded(640, 640, border_mode=0,
+#                                                                             value=(114, 114, 114),)])
 
 def get_boxes(frame):
     frame = cv2.cvtColor(np.asarray(frame), cv2.COLOR_BGR2RGB)
-    frame = cv2.resize(frame, (640, 640))
+    frame = cv2.resize(frame, (640, 640))  # does not keep aspect ratio: better resize by longest side and pad shortest
+    # frame = transforms(image=frame)["image"]
     image_tensor = torch.FloatTensor(frame / 255.).permute(2, 0, 1).unsqueeze(0).to("cpu")
 
     with torch.no_grad():
