@@ -11,21 +11,15 @@ from resnet import ResidualBlock, Resnet
 # to get proper performance without dll duplicates define new environment
 # import albumentations as A
 
+import argparse
+
 
 COLORS = np.random.uniform(0, 255, size=(80, 3))
-cropping = True
 
 yolo_model = create_yolov7_model(architecture="yolov7", num_classes=1, pretrained=False)
 checkpoint = torch.load("best_model.pt", map_location="cpu")
 yolo_model.load_state_dict(checkpoint["model_state_dict"])
 yolo_model.eval()
-
-mpHands = mp.solutions.hands
-hands = mpHands.Hands()
-
-checkpoint = torch.load("model.pth", map_location="cuda")
-model = checkpoint["model"]
-model.load_state_dict(checkpoint["state_dict"])
 
 int_to_labels = {0: 'palm', 1: 'l', 2: 'fist', 3: 'moved', 4: 'thumb', 5: 'index', 6: 'ok', 7: 'c', 8: 'down'}
 # transforms = A.Compose([A.LongestMaxSize(max_size=640, p=1.0), A.PadIfNeeded(640, 640, border_mode=0,
@@ -145,10 +139,10 @@ def image_resize(image, width=None, height=None, inter=cv2.INTER_AREA):
 
 def get_hand_label(model, image):
     if len(image.shape) > 2:
-        frame = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # frame = cv2.resize(frame, (256, 96))
-    frame = image_resize(frame, height=96, inter=cv2.INTER_AREA)
+    # frame = cv2.resize(image, (256, 96))
+    frame = image_resize(image, height=96, inter=cv2.INTER_AREA)
     canvas = np.zeros((96, 256))
     canvas[:, 0:frame.shape[1]] = frame
     frame = canvas.astype(np.uint8)
@@ -214,7 +208,8 @@ def get_convex_crop(image, landmarks, brighten=False, value=50):  # rgb image
 
     return new_image
 
-def main():
+
+def main(cropping):
     cap = cv2.VideoCapture(0)
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -228,7 +223,7 @@ def main():
 
         if ret:
 
-            boxes = get_boxes(frame)
+            boxes = get_boxes(frame)  # bgr
             text = f"Show sign"
 
             if len(boxes) > 0:  # do not response on hand gesture in case of no face detected
@@ -236,9 +231,8 @@ def main():
                 B = cv2.equalizeHist(B)
                 G = cv2.equalizeHist(G)
                 R = cv2.equalizeHist(R)
-                frame = cv2.merge((B, G, R))
-
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.merge((B, G, R))  # bgr
+                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # rgb
 
                 results = hands.process(image)
                 # hand_boxes = get_hand_boxes(image, results)
@@ -248,7 +242,7 @@ def main():
                     if cropping:
                         # images = crop_hands(image, hand_boxes, False)
                         # text = get_hand_label(model, images[0])
-                        new_image = get_convex_crop(image, landmarks, brighten=True, value=30)
+                        new_image = get_convex_crop(image, landmarks, brighten=True, value=30)  # bgr
                         text = get_hand_label(model, new_image)
                     else:
                         text = get_hand_label(model, frame)
@@ -268,5 +262,20 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--crop', default="none")  # crop - to crop and preprocess
+    parser.add_argument('-v', '--augment', default="none")
+    args = parser.parse_args()
 
+    cropping = True if args.crop == "crop" else False
+    model_name = "augmodel.pth" if args.augment == "augment" else "model.pth"
+
+    # cropping = True  # set to True to crop polygon and adjust brightness
+    mpHands = mp.solutions.hands
+    hands = mpHands.Hands()
+
+    checkpoint = torch.load(model_name, map_location="cuda")
+    model = checkpoint["model"]
+    model.load_state_dict(checkpoint["state_dict"])
+
+    main(cropping=cropping)
